@@ -114,3 +114,43 @@ Flowdex sadece bir fiyat izleme aracı değil:
 ## 📜 Lisans
 
 MIT
+---
+
+## 🧱 Faz 0 Uygulama Durumu
+
+Faz 0 kapsamında temel monorepo altyapısı hazırlandı:
+
+- **Backend (`backend/`)** – FastAPI tabanlı servis, PostgreSQL şeması, watchlist ve kullanıcı ayarları için CRUD uç noktaları.
+- **Frontend (`frontend/`)** – Next.js 14 + Tailwind başlangıç arayüzü, API sağlık durumunu canlı kontrol eden bileşen.
+- **Infra (`infra/`)** – PostgreSQL, Kafka/Zookeeper, FastAPI ve Next.js servislerini ayağa kaldıran Docker Compose betikleri.
+
+### Geliştirme Akışı
+
+1. Python bağımlılıklarını kur ve testleri çalıştır:
+   ```bash
+   pip install -r requirements.txt
+   pytest
+   ```
+2. Frontend bağımlılıklarını yükle:
+   ```bash
+   cd frontend
+   npm install
+   ```
+3. Docker Compose ile tüm servisleri başlat:
+   ```bash
+   cd ../infra
+   docker compose up --build
+   ```
+4. Servislere erişim:
+   - FastAPI → http://localhost:8000/docs
+   - Next.js frontend → http://localhost:3000
+
+Backend konteyneri otomatik olarak tablo şemasını oluşturur ve `/api` altında kullanıcı/watchlist ayar uç noktalarını sunar.
+## 🚀 Faz 1 Geliştirmeleri
+
+- **Market API katmanı** – `/api/markets/overview`, `/api/markets/top-movers`, `/api/markets/{symbol}` ve `/api/markets/watchlist/{user_id}` uç noktaları statik demo veri seti üzerinden fiyat, hacim ve sparkline bilgisi sunar.
+- **SSE Watchlist yayını** – `/api/markets/stream` uç noktası, query parametreleriyle seçilen semboller için kısa süreli Server Sent Events akışı üretir. Faz 2'de Kafka beslemesine bağlanacak mimari prova edildi.
+- **Next.js dashboard güncellemesi** – Canlı market özeti, watchlist akışı, Top Movers kartları ve odak varlık detayı tek sayfada sunuldu. Demo kullanıcı (`phase1-demo@flowdex.app`) ve BTC/ETH/SOL watchlist'i ilk render sırasında otomatik oluşturulur.
+
+> Not: Demo veri seti statiktir ve test amaçlıdır; gerçek zamanlı fiyatlar için Faz 2'de Kafka/Spark hattı devreye alınacaktır.
+
