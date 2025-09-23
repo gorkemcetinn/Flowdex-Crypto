@@ -1,0 +1,19 @@
+# Kafka producer/consumer
+kafka-python==2.0.2
+
+# Websocket client (Binance stream için)
+websockets==12.0
+
+# .env dosyası okumak için
+python-dotenv==1.0.1
+
+# Spark streaming (Kafka → Postgres)
+pyspark==3.5.1
+
+# Backend (API)
+fastapi==0.114.2
+uvicorn[standard]==0.30.6
+psycopg2-binary==2.9.9
+
+# Test & kalite
+pytest==8.2.2
