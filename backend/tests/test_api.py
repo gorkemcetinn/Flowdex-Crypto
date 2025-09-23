@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Generator
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -123,3 +125,74 @@ def test_user_settings_defaults_and_update(client: TestClient) -> None:
     assert updated["currency"] == "EUR"
     assert updated["theme"] == "dark"
     assert updated["language"] == "tr"
+
+def test_market_overview(client: TestClient) -> None:
+    """Overview endpoint exposes the static market dataset."""
+
+    response = client.get("/api/markets/overview")
+    assert response.status_code == 200
+    assets = response.json()
+    assert len(assets) >= 6
+    assert assets[0]["symbol"] == "BTC"
+    assert assets[0]["price"] > 0
+
+def test_market_detail(client: TestClient) -> None:
+    """Asset detail returns extended metadata and sparkline."""
+
+    response = client.get("/api/markets/BTC")
+    assert response.status_code == 200
+    detail = response.json()
+    assert detail["symbol"] == "BTC"
+    assert "description" in detail
+    assert len(detail["sparkline"]) >= 2
+
+def test_market_top_movers(client: TestClient) -> None:
+    """Top movers separates gainers and losers."""
+
+    response = client.get("/api/markets/top-movers", params={"limit": 3})
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["gainers"]) == 3
+    assert len(payload["losers"]) == 3
+    assert payload["gainers"][0]["percent_change_24h"] >= payload["gainers"][1]["percent_change_24h"]
+    assert payload["losers"][0]["percent_change_24h"] <= payload["losers"][1]["percent_change_24h"]
+
+def test_watchlist_market_snapshot(client: TestClient) -> None:
+    """Watchlist market endpoint augments entries with quotes."""
+
+    user = client.post("/api/users", json={"email": "watcher@example.com"}).json()
+    user_id = user["id"]
+    for symbol in ("btc", "eth"):
+        add_resp = client.post(f"/api/watchlist/{user_id}", json={"symbol": symbol})
+        assert add_resp.status_code in {200, 201}
+
+    snapshot = client.get(f"/api/markets/watchlist/{user_id}")
+    assert snapshot.status_code == 200
+    quotes = snapshot.json()
+    assert {quote["symbol"] for quote in quotes} == {"BTC", "ETH"}
+    assert all(len(quote["sparkline"]) >= 2 for quote in quotes)
+
+def test_market_stream_emits_events(client: TestClient) -> None:
+    """Streaming endpoint yields SSE payloads for watchlist quotes."""
+
+    payload_line = None
+    with client.stream(
+        "GET",
+        "/api/markets/stream",
+        params={"symbols": "BTC,ETH", "max_events": 2, "delay": 0.01},
+    ) as response:
+        assert response.status_code == 200
+        for chunk in response.iter_text():
+            if not chunk:
+                continue
+            for line in chunk.strip().splitlines():
+                if line.startswith("data: "):
+                    payload_line = line[len("data: ") :]
+                    break
+            if payload_line:
+                break
+
+    assert payload_line is not None
+    event = json.loads(payload_line)
+    assert event["type"] == "watchlist_snapshot"
+    assert {quote["symbol"] for quote in event["quotes"]} == {"BTC", "ETH"}

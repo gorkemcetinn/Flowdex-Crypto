@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api.routes import user_settings, users, watchlist
+from .api.routes import markets, user_settings, users, watchlist
 from .core.config import settings
 from .db import session as db_session
 from .db.base import Base
@@ -39,6 +39,9 @@ def healthcheck() -> dict[str, str]:
 app.include_router(users.router, prefix=f"{settings.api_v1_prefix}/users", tags=["users"])
 app.include_router(
     watchlist.router, prefix=f"{settings.api_v1_prefix}/watchlist", tags=["watchlist"]
+)
+app.include_router(
+    markets.router, prefix=f"{settings.api_v1_prefix}/markets", tags=["markets"]
 )
 app.include_router(
     user_settings.router,

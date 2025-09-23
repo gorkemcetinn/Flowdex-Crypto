@@ -146,3 +146,11 @@ Faz 0 kapsamında temel monorepo altyapısı hazırlandı:
    - Next.js frontend → http://localhost:3000
 
 Backend konteyneri otomatik olarak tablo şemasını oluşturur ve `/api` altında kullanıcı/watchlist ayar uç noktalarını sunar.
+## 🚀 Faz 1 Geliştirmeleri
+
+- **Market API katmanı** – `/api/markets/overview`, `/api/markets/top-movers`, `/api/markets/{symbol}` ve `/api/markets/watchlist/{user_id}` uç noktaları statik demo veri seti üzerinden fiyat, hacim ve sparkline bilgisi sunar.
+- **SSE Watchlist yayını** – `/api/markets/stream` uç noktası, query parametreleriyle seçilen semboller için kısa süreli Server Sent Events akışı üretir. Faz 2'de Kafka beslemesine bağlanacak mimari prova edildi.
+- **Next.js dashboard güncellemesi** – Canlı market özeti, watchlist akışı, Top Movers kartları ve odak varlık detayı tek sayfada sunuldu. Demo kullanıcı (`phase1-demo@flowdex.app`) ve BTC/ETH/SOL watchlist'i ilk render sırasında otomatik oluşturulur.
+
+> Not: Demo veri seti statiktir ve test amaçlıdır; gerçek zamanlı fiyatlar için Faz 2'de Kafka/Spark hattı devreye alınacaktır.
+
