@@ -1,10 +1,15 @@
-"""Static market data helpers for Phase 1 development."""
+"""Market data helpers that blend streaming results with demo fallbacks."""
 from __future__ import annotations
 
 import asyncio
 import copy
 import random
 from typing import Any, AsyncIterator, Iterable, Sequence
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from ..models.market import MarketPriceSnapshot
 
 
 _BASE_FIELDS = (
@@ -266,29 +271,142 @@ _ORDERED_SYMBOLS = sorted(
 )
 
 
+class DatabaseMarketData:
+    """Read market data persisted by the streaming pipeline."""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def _query_snapshots(
+        self,
+        *,
+        symbols: Sequence[str] | None = None,
+        limit: int | None = None,
+    ) -> list[MarketPriceSnapshot]:
+        stmt = select(MarketPriceSnapshot)
+        if symbols:
+            normalized = [symbol.upper() for symbol in symbols]
+            stmt = stmt.where(MarketPriceSnapshot.symbol.in_(normalized))
+        stmt = stmt.order_by(MarketPriceSnapshot.market_cap.desc())
+        if limit:
+            stmt = stmt.limit(limit)
+        result = self.session.execute(stmt)
+        return list(result.scalars())
+
+    @staticmethod
+    def _ensure_sparkline(data: list[float] | None) -> list[float]:
+        if data and len(data) >= 2:
+            return list(data)
+        if data:
+            return list(data) + list(data)
+        return [0.0, 0.0]
+
+    def _snapshot_to_base(self, snapshot: MarketPriceSnapshot) -> dict[str, Any]:
+        return {
+            "symbol": snapshot.symbol,
+            "name": snapshot.name,
+            "price": snapshot.price,
+            "percent_change_24h": snapshot.percent_change_24h,
+            "percent_change_7d": snapshot.percent_change_7d,
+            "volume_24h": snapshot.volume_24h,
+            "market_cap": snapshot.market_cap,
+            "sparkline": self._ensure_sparkline(snapshot.sparkline),
+        }
+
+    def _snapshot_to_detail(self, snapshot: MarketPriceSnapshot) -> dict[str, Any]:
+        base = self._snapshot_to_base(snapshot)
+        base.update(
+            {
+                "high_24h": snapshot.high_24h or snapshot.price,
+                "low_24h": snapshot.low_24h or snapshot.price,
+                "description": snapshot.description or "",
+            }
+        )
+        return base
+
+    def _snapshot_to_move(self, snapshot: MarketPriceSnapshot) -> dict[str, Any]:
+        return {
+            "symbol": snapshot.symbol,
+            "name": snapshot.name,
+            "price": snapshot.price,
+            "percent_change_24h": snapshot.percent_change_24h,
+            "volume_24h": snapshot.volume_24h,
+        }
+
+    def has_symbol(self, symbol: str) -> bool:
+        return self.session.get(MarketPriceSnapshot, symbol.upper()) is not None
+
+    def list_symbols(self) -> list[str]:
+        return [row.symbol for row in self._query_snapshots()]
+
+    def get_overview(self, limit: int | None) -> list[dict[str, Any]]:
+        return [self._snapshot_to_base(row) for row in self._query_snapshots(limit=limit)]
+
+    def get_top_movers(self, limit: int) -> dict[str, list[dict[str, Any]]]:
+        snapshots = self._query_snapshots()
+        if not snapshots:
+            return {"gainers": [], "losers": []}
+        sorted_desc = sorted(
+            snapshots, key=lambda row: row.percent_change_24h, reverse=True
+        )
+        sorted_asc = list(reversed(sorted_desc))
+        return {
+            "gainers": [self._snapshot_to_move(row) for row in sorted_desc[:limit]],
+            "losers": [self._snapshot_to_move(row) for row in sorted_asc[:limit]],
+        }
+
+    def get_asset_detail(self, symbol: str) -> dict[str, Any] | None:
+        snapshot = self.session.get(MarketPriceSnapshot, symbol.upper())
+        if not snapshot:
+            return None
+        return self._snapshot_to_detail(snapshot)
+
+    def get_watchlist_snapshots(self, symbols: Sequence[str]) -> list[dict[str, Any]]:
+        if not symbols:
+            return []
+        normalized = [symbol.upper() for symbol in symbols]
+        rows = self._query_snapshots(symbols=normalized)
+        by_symbol = {row.symbol: self._snapshot_to_base(row) for row in rows}
+        return [by_symbol[symbol] for symbol in normalized if symbol in by_symbol]
+
 def _filter_fields(asset: dict[str, Any], fields: Iterable[str]) -> dict[str, Any]:
     return {field: copy.deepcopy(asset[field]) for field in fields}
 
 
-def list_symbols() -> list[str]:
+def list_symbols(db: Session | None = None) -> list[str]:
     """Return the list of supported market symbols."""
 
+    if db:
+        source = DatabaseMarketData(db)
+        symbols = source.list_symbols()
+        if symbols:
+            return symbols
     return list(_MARKET_DATA.keys())
 
 
-def get_overview(limit: int | None = None) -> list[dict[str, Any]]:
+def get_overview(limit: int | None = None, db: Session | None = None) -> list[dict[str, Any]]:
     """Return a market overview sorted by market cap."""
 
+    if db:
+        source = DatabaseMarketData(db)
+        rows = source.get_overview(limit)
+        if rows:
+            return rows
     symbols = _ORDERED_SYMBOLS
     if limit is not None:
         symbols = symbols[: max(limit, 0)]
     return [_filter_fields(_MARKET_DATA[symbol], _BASE_FIELDS) for symbol in symbols]
 
 
-def get_top_movers(limit: int = 4) -> dict[str, list[dict[str, Any]]]:
+def get_top_movers(limit: int = 4, db: Session | None = None) -> dict[str, list[dict[str, Any]]]:
     """Return top gainers and losers by 24h change."""
 
     limit = max(1, limit)
+    if db:
+        source = DatabaseMarketData(db)
+        payload = source.get_top_movers(limit)
+        if payload["gainers"] or payload["losers"]:
+            return payload
     sorted_by_change = sorted(
         _MARKET_DATA.values(), key=lambda asset: asset["percent_change_24h"], reverse=True
     )
@@ -302,18 +420,30 @@ def get_top_movers(limit: int = 4) -> dict[str, list[dict[str, Any]]]:
     return {"gainers": gainers, "losers": losers}
 
 
-def get_asset_detail(symbol: str) -> dict[str, Any] | None:
+def get_asset_detail(symbol: str, db: Session | None = None) -> dict[str, Any] | None:
     """Return full detail for a symbol if available."""
 
+    if db:
+        source = DatabaseMarketData(db)
+        detail = source.get_asset_detail(symbol)
+        if detail:
+            return detail
     asset = _MARKET_DATA.get(symbol.upper())
     if not asset:
         return None
     return _filter_fields(asset, _DETAIL_FIELDS)
 
 
-def get_watchlist_snapshots(symbols: Sequence[str]) -> list[dict[str, Any]]:
+def get_watchlist_snapshots(
+    symbols: Sequence[str], db: Session | None = None
+) -> list[dict[str, Any]]:
     """Return overview entries for the requested symbols preserving order."""
 
+    if db:
+        source = DatabaseMarketData(db)
+        snapshots = source.get_watchlist_snapshots(symbols)
+        if snapshots:
+            return snapshots
     seen: set[str] = set()
     snapshots: list[dict[str, Any]] = []
     for symbol in symbols:
@@ -327,9 +457,11 @@ def get_watchlist_snapshots(symbols: Sequence[str]) -> list[dict[str, Any]]:
     return snapshots
 
 
-def available_symbol(symbol: str) -> bool:
+def available_symbol(symbol: str, db: Session | None = None) -> bool:
     """Return True if the dataset includes the symbol."""
 
+    if db and DatabaseMarketData(db).has_symbol(symbol):
+        return True
     return symbol.upper() in _MARKET_DATA
 
 
@@ -340,14 +472,27 @@ def normalize_symbol(symbol: str) -> str:
 
 
 async def stream_quotes(
-    symbols: Sequence[str], *, iterations: int = 5, delay: float = 0.15
+    symbols: Sequence[str],
+    *,
+    iterations: int = 5,
+    delay: float = 0.15,
+    db: Session | None = None,
+    seed_quotes: Sequence[dict[str, Any]] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Yield pseudo-random price updates for a list of symbols."""
 
+    source = DatabaseMarketData(db) if db else None
+    seed_symbol_set = {quote["symbol"].upper() for quote in seed_quotes or []}
     normalized: list[str] = []
     for symbol in symbols:
         upper = symbol.upper()
-        if upper in _MARKET_DATA and upper not in normalized:
+        if upper in normalized:
+            continue
+        if source and source.has_symbol(upper):
+            normalized.append(upper)
+        elif upper in seed_symbol_set:
+            normalized.append(upper)
+        elif upper in _MARKET_DATA:
             normalized.append(upper)
 
     if not normalized:
@@ -357,8 +502,29 @@ async def stream_quotes(
     seed = sum(ord(ch) for symbol in normalized for ch in symbol)
     rng = random.Random(seed)
 
-    base_prices = {symbol: _MARKET_DATA[symbol]["price"] for symbol in normalized}
-    base_changes = {symbol: _MARKET_DATA[symbol]["percent_change_24h"] for symbol in normalized}
+    snapshots: list[dict[str, Any]] = []
+    if seed_quotes:
+        snapshots = [quote for quote in seed_quotes if quote["symbol"] in normalized]
+    elif source:
+        snapshots = source.get_watchlist_snapshots(normalized)
+    if not snapshots:
+        snapshots = get_watchlist_snapshots(normalized)
+
+    price_map = {quote["symbol"]: quote["price"] for quote in snapshots}
+    change_map = {quote["symbol"]: quote["percent_change_24h"] for quote in snapshots}
+
+    base_prices: dict[str, float] = {}
+    base_changes: dict[str, float] = {}
+    for symbol in normalized:
+        if symbol in price_map:
+            base_prices[symbol] = price_map[symbol]
+            base_changes[symbol] = change_map.get(symbol, 0.0)
+        elif symbol in _MARKET_DATA:
+            base_prices[symbol] = _MARKET_DATA[symbol]["price"]
+            base_changes[symbol] = _MARKET_DATA[symbol]["percent_change_24h"]
+        else:
+            base_prices[symbol] = 0.0
+            base_changes[symbol] = 0.0
 
     for _ in range(iterations):
         updates: list[dict[str, Any]] = []

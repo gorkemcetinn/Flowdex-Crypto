@@ -154,3 +154,10 @@ Backend konteyneri otomatik olarak tablo şemasını oluşturur ve `/api` altın
 
 > Not: Demo veri seti statiktir ve test amaçlıdır; gerçek zamanlı fiyatlar için Faz 2'de Kafka/Spark hattı devreye alınacaktır.
 
+## ⚡ Faz 2 Geliştirmeleri
+
+- **Gerçek zamanlı veri modeli** – `market_price_snapshots` ve `market_ohlcv` tabloları Spark job’ı tarafından beslenir, FastAPI bu tablolardan okuyarak demo datası yerine canlı verileri önceliklendirir.
+- **Kafka üreticisi** – `streaming/mock_price_producer.py` sentetik tik verisini `prices.ticks` topiğine yazarak lokal geliştirme için gerçek zamanlı veri simüle eder.
+- **PySpark OHLCV job’ı** – `streaming/spark_ohlcv_job.py`, Kafka → Spark → Postgres hattını kurar; OHLC mumlarını yazıp anlık snapshotları günceller.
+- **API iyileştirmeleri** – Market uç noktaları ve SSE yayını, veri tabanı doldurulduğunda otomatik olarak yeni verileri döndürür; veri yoksa demo datasetine düşer.
+

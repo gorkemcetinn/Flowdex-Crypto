@@ -2,4 +2,9 @@
 from __future__ import annotations
 
 from .base_class import Base  # noqa: F401
-from ..models import user, user_settings, watchlist_item  # noqa: F401
+from ..models import (  # noqa: F401
+    market,
+    user,
+    user_settings,
+    watchlist_item,
+)
