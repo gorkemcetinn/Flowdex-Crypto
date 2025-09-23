@@ -14,6 +14,9 @@ pyspark==3.5.1
 fastapi==0.114.2
 uvicorn[standard]==0.30.6
 psycopg2-binary==2.9.9
+SQLAlchemy==2.0.32
+email-validator==2.1.1
 
 # Test & kalite
 pytest==8.2.2
+httpx==0.27.2
