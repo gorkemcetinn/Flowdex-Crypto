@@ -4,6 +4,7 @@ import MarketOverviewSection from '../components/MarketOverviewSection';
 import TopMoversSection from '../components/TopMoversSection';
 import WatchlistPanel from '../components/WatchlistPanel';
 import {
+  ApiUnavailableError,
   ensureDemoUser,
   fetchAssetDetail,
   fetchMarketOverview,
@@ -11,10 +12,23 @@ import {
   fetchWatchlist,
   seedDemoWatchlist
 } from '../lib/api';
+import type {
+  MarketAssetDetail,
+  MarketAssetSnapshot,
+  TopMoversPayload,
+  WatchlistAsset
+} from '../lib/api';
 import { getApiBaseUrl } from '../lib/config';
+import {
+  DEMO_WATCHLIST_SYMBOLS,
+  getDemoAssetDetail,
+  getDemoMarketOverview,
+  getDemoTopMovers,
+  getDemoWatchlist
+} from '../lib/demo-data';
 
 const DEMO_EMAIL = 'phase1-demo@flowdex.app';
-const DEMO_WATCHLIST = ['BTC', 'ETH', 'SOL'] as const;
+const DEMO_WATCHLIST = DEMO_WATCHLIST_SYMBOLS;
 
 const phaseOneHighlights = [
   {
@@ -36,15 +50,34 @@ const phaseOneHighlights = [
 
 export default async function HomePage() {
   const apiBaseUrl = getApiBaseUrl();
-  const demoUser = await ensureDemoUser(DEMO_EMAIL);
-  await seedDemoWatchlist(demoUser.id, DEMO_WATCHLIST);
+  let overview: MarketAssetSnapshot[] = [];
+  let topMovers: TopMoversPayload = { gainers: [], losers: [] };
+  let watchlist: WatchlistAsset[] = [];
+  let btcDetail: MarketAssetDetail = getDemoAssetDetail('BTC');
+  let usingFallback = false;
 
-  const [overview, topMovers, watchlist, btcDetail] = await Promise.all([
-    fetchMarketOverview(),
-    fetchTopMovers(),
-    fetchWatchlist(demoUser.id),
-    fetchAssetDetail('BTC')
-  ]);
+  try {
+    const demoUser = await ensureDemoUser(DEMO_EMAIL);
+    await seedDemoWatchlist(demoUser.id, DEMO_WATCHLIST);
+
+    [overview, topMovers, watchlist, btcDetail] = await Promise.all([
+      fetchMarketOverview(),
+      fetchTopMovers(),
+      fetchWatchlist(demoUser.id),
+      fetchAssetDetail('BTC')
+    ]);
+  } catch (error) {
+    if (error instanceof ApiUnavailableError) {
+      usingFallback = true;
+      console.error('Flowdex API is unreachable, rendering static demo data.', error);
+      overview = getDemoMarketOverview();
+      topMovers = getDemoTopMovers();
+      watchlist = getDemoWatchlist(DEMO_WATCHLIST);
+      btcDetail = getDemoAssetDetail('BTC');
+    } else {
+      throw error;
+    }
+  }
 
   const watchlistSymbols = watchlist.map((item) => item.symbol);
 
@@ -64,6 +97,15 @@ export default async function HomePage() {
           <span className="font-semibold text-slate-100">API Base URL:</span>{' '}
           <code className="rounded bg-slate-800 px-2 py-1 text-slate-200">{apiBaseUrl}</code>
         </div>
+        {usingFallback ? (
+          <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
+            <p className="font-medium text-amber-100">API bağlantısı kurulamadı.</p>
+            <p className="mt-1 text-amber-200/90">
+              Backend servisleri çalışmadığında Faz 1 bileşenleri statik demo verisi ile render edilir. Docker Compose
+              yığınını veya FastAPI sunucusunu başlatarak gerçek API üzerinden canlı deneyimi görebilirsiniz.
+            </p>
+          </div>
+        ) : null}
       </section>
 
       <section className="grid gap-6 md:grid-cols-3">

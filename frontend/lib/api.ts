@@ -1,5 +1,15 @@
 import { getApiBaseUrl } from './config';
 
+export class ApiUnavailableError extends Error {
+  public readonly cause?: unknown;
+
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message);
+    this.name = 'ApiUnavailableError';
+    this.cause = options?.cause;
+  }
+}
+
 export interface MarketAssetSnapshot {
   symbol: string;
   name: string;
@@ -49,16 +59,26 @@ export interface UserPayload {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${getApiBaseUrl()}${path}`, {
-    cache: 'no-store',
-    ...init,
-    headers: {
-      Accept: 'application/json',
-      ...(init.headers ?? {})
-    }
-  });
+  const url = `${getApiBaseUrl()}${path}`;
+  let response: Response;
+
+  try {
+    response = await fetch(url, {
+      cache: 'no-store',
+      ...init,
+      headers: {
+        Accept: 'application/json',
+        ...(init.headers ?? {})
+      }
+    });
+  } catch (error) {
+    throw new ApiUnavailableError(`API request to ${url} failed`, { cause: error });
+  }
 
   if (!response.ok) {
+    if (response.status >= 500) {
+      throw new ApiUnavailableError(`API request to ${url} failed with ${response.status}`);
+    }
     throw new Error(`API request to ${path} failed with ${response.status}`);
   }
 
@@ -82,18 +102,20 @@ export async function ensureDemoUser(email = 'demo@flowdex.app'): Promise<UserPa
 export async function seedDemoWatchlist(userId: string, symbols: readonly string[]): Promise<void> {
   await Promise.all(
     symbols.map(async (symbol) => {
-      const response = await fetch(`${getApiBaseUrl()}/watchlist/${userId}`, {
-        method: 'POST',
-        cache: 'no-store',
-        headers: {
-          Accept: 'application/json',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ symbol })
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to seed watchlist with ${symbol}`);
+      try {
+        await request(`/watchlist/${userId}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ symbol })
+        });
+      } catch (error) {
+        if (error instanceof ApiUnavailableError) {
+          throw error;
+        }
+        const message = error instanceof Error ? error.message : 'unknown error';
+        throw new Error(`Failed to seed watchlist with ${symbol}: ${message}`);
       }
     })
   );
